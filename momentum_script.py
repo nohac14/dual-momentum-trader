@@ -135,13 +135,20 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
         text = "PASS" if passed else "FAIL"
         return f'<b style="color: {color};">{text}</b>'
 
-    # --- This is the updated, cleaner section ---
+    # Color for the blended score
+    score_color = "#28a745" if slow_check['passed'] else "#dc3545"
     price_color = "#28a745" if fast_check['is_above_sma100'] else "#dc3545"
     ret_color = "#28a745" if fast_check['is_6m_positive'] else "#dc3545"
+    
     protection_rows = f"""
     <tr>
         <td><b>Slow Trigger</b> (Blended Score > 0%)</td>
         <td style="text-align:right;">{status_tag(slow_check['passed'])}</td>
+    </tr>
+    <tr>
+        <td colspan="2" style="padding-left:15px; font-size:0.9em; color:#555;">
+            {'''- Blended Score: <b style="color:{score_color};">{slow_check['score']:.2%}</b>'''}
+        </td>
     </tr>
     <tr>
         <td style="padding-top:10px;"><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td>
@@ -251,6 +258,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 
