@@ -50,11 +50,12 @@ def get_momentum_score(price_series: pd.Series, last_ts: pd.Timestamp):
     return score, comps
 
 def decide_allocation(asof: dt.date | None = None) -> dict:
-    """Apply the enhanced rules and produce target allocations."""
+    """Apply professional-grade rules with Volatility Targeting."""
     if asof is None: asof = dt.datetime.now(NY_TZ).date()
 
     all_tickers = [US_EQ, INTL_EQ, BONDS, GOLD]
-    start_date = (pd.Timestamp(asof) - pd.DateOffset(months=max(LOOKBACKS)+9)).date()
+    # More history is needed for volatility calculation
+    start_date = (pd.Timestamp(asof) - pd.DateOffset(months=max(LOOKBACKS)+12)).date()
     all_data = yf.download(all_tickers, start=start_date, end=asof + dt.timedelta(days=1), auto_adjust=False, progress=False)
     
     if all_data.empty: raise RuntimeError("Failed to download market data.")
@@ -66,118 +67,115 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
     intl_score, intl_comps = get_momentum_score(adj_close[INTL_EQ], last_ts)
 
     if us_score >= intl_score:
-        winner, winner_score = US_EQ, us_score
+        winner, winner_score, winner_comps = US_EQ, us_score, us_comps
     else:
-        winner, winner_score = INTL_EQ, intl_score
+        winner, winner_score, winner_comps = INTL_EQ, intl_score, intl_comps
 
     winner_prices = adj_close[winner].dropna()
     if len(winner_prices) < 200:
-      raise RuntimeError(f"Not enough data to compute 200-day SMA for {winner}")
+      raise RuntimeError(f"Not enough data for {winner}")
 
+    # (Crash protection logic remains the same)
+    slow_trigger_passed = winner_score > 0.0
     winner_price = winner_prices.iloc[-1]
-    winner_sma200 = winner_prices.rolling(window=200).mean().iloc[-1]
-    is_above_sma = winner_price > winner_sma200
+    winner_sma100 = winner_prices.rolling(window=100).mean().iloc[-1]
+    is_above_sma100 = winner_price > winner_sma100
+    six_month_return = next((r for m, r, *_ in winner_comps if m == 6), None)
+    is_6m_positive = six_month_return > 0.0 if six_month_return is not None else False
+    fast_trigger_passed = is_above_sma100 and is_6m_positive
     
-    if winner_score > 0.0 and is_above_sma:
-        alloc = {US_EQ: 1.0, INTL_EQ: 0.0, BONDS: 0.0, GOLD: 0.0} if winner == US_EQ else \
-                {US_EQ: 0.0, INTL_EQ: 1.0, BONDS: 0.0, GOLD: 0.0}
+    # --- NEW: Volatility Targeting Logic ---
+    target_vol = 0.15  # Target 15% annualized volatility
+    # Calculate daily returns for the last month (~21 trading days)
+    daily_returns = winner_prices.pct_change()
+    # Calculate annualized volatility
+    recent_vol = daily_returns.iloc[-21:].std() * np.sqrt(252)
+    
+    # Determine allocation based on volatility (capped at 100%)
+    vol_based_alloc = min(1.0, target_vol / recent_vol) if recent_vol > 0 else 1.0
+
+    if slow_trigger_passed and fast_trigger_passed:
         regime = f"RISK-ON → {winner}"
+        # Allocation is now dynamic
+        final_winner_alloc = vol_based_alloc
+        alloc = {US_EQ: 0.0, INTL_EQ: 0.0, BONDS: 1.0 - final_winner_alloc, GOLD: 0.0}
+        alloc[winner] = final_winner_alloc
     else:
+        regime = f"RISK-OFF → Defensive"
         alloc = {US_EQ: 0.0, INTL_EQ: 0.0,
                  BONDS: DEFENSIVE_SPLIT[0], GOLD: DEFENSIVE_SPLIT[1]}
-        regime = f"RISK-OFF → {DEFENSIVE_SPLIT[0]*100:.0f}% {BONDS} + {DEFENSIVE_SPLIT[1]*100:.0f}% {GOLD}"
 
     return {
-        "as_of_date": str(asof), "us_momentum_score": us_score, "us_comps": us_comps,
-        "intl_momentum_score": intl_score, "intl_comps": intl_comps, "winner": winner,
-        "winner_score": winner_score, "regime": regime, "allocation": alloc,
-        "sma_check": {"price": winner_price, "sma200": winner_sma200, "is_above": is_above_sma}
+        "as_of_date": str(asof), "winner": winner, "regime": regime, "allocation": alloc,
+        "protection_checks": {
+            "slow_trigger": {"score": winner_score, "passed": slow_trigger_passed},
+            "fast_trigger": {"price": winner_price, "sma100": winner_sma100, "is_above_sma100": is_above_sma100,
+                             "6m_return": six_month_return, "is_6m_positive": is_6m_positive, "passed": fast_trigger_passed}
+        },
+        "volatility_targeting": {
+            "target": target_vol, "recent": recent_vol, "allocation_pct": vol_based_alloc
+        }
     }
 
 def format_results_for_email(out: dict) -> tuple[str, str]:
     """Formats the allocation results into a detailed, mobile-friendly HTML email."""
     
-    # --- Dynamic Colors and Text ---
     is_risk_on = "RISK-ON" in out['regime']
-    status_color = "#28a745" if is_risk_on else "#fd7e14"  # Green for ON, Orange for OFF
-    sma_info = out['sma_check']
-    sma_status_text = "PASS" if sma_info['is_above'] else "FAIL"
-    sma_status_color = "#28a745" if sma_info['is_above'] else "#dc3545"  # Green for PASS, Red for FAIL
+    status_color = "#28a745" if is_risk_on else "#fd7e14"
     subject = f"Dual Momentum Signal: {out['regime']}"
+    
+    # (Protection checks section remains the same)
+    checks = out['protection_checks']
+    slow_check, fast_check = checks['slow_trigger'], checks['fast_trigger']
+    def status_tag(passed):
+        color, text = ("#28a745", "PASS") if passed else ("#dc3545", "FAIL")
+        return f'<b style="color: {color};">{text}</b>'
 
-    # --- Build HTML Table Rows ---
-    def _build_momentum_rows(name, score, comps):
-        rows = f'<tr><td colspan="2" style="padding-top: 15px;"><b>{name}</b></td><td style="text-align:right;"><b>{score:.2%}</b></td></tr>'
-        for m, r, base_ts, _, _ in comps:
-            rows += (f'<tr><td style="padding-left: 20px; font-size: 0.9em; color: #555;"><em>{m}-month</em></td>'
-                     f'<td style="font-size: 0.8em; color: #777;"><em>({base_ts.date()})</em></td>'
-                     f'<td style="text-align:right; font-size: 0.9em; color: #555;"><em>{r:.2%}</em></td></tr>')
-        return rows
+    protection_rows = f"""
+    <tr><td><b>Slow Trigger</b> (Blended Score > 0%)</td><td style="text-align:right;">{status_tag(slow_check['passed'])}</td></tr>
+    <tr><td><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td><td style="text-align:right;">{status_tag(fast_check['passed'])}</td></tr>
+    """
 
-    us_momentum_rows = _build_momentum_rows(US_EQ, out['us_momentum_score'], out['us_comps'])
-    intl_momentum_rows = _build_momentum_rows(INTL_EQ, out['intl_momentum_score'], out['intl_comps'])
+    # --- NEW: Build HTML for Volatility Targeting ---
+    vol_info = out['volatility_targeting']
+    volatility_rows = ""
+    if is_risk_on:
+        volatility_rows = f"""
+        <tr><td>Recent Volatility (Annualized)</td><td style="text-align:right;">{vol_info['recent']:.2%}</td></tr>
+        <tr><td>Target Volatility</td><td style="text-align:right;">{vol_info['target']:.2%}</td></tr>
+        <tr><td><b>Calculated Allocation</b></td><td style="text-align:right;"><b>{vol_info['allocation_pct']:.2%}</b></td></tr>
+        """
     
     alloc_rows = ""
     for ticker in [US_EQ, INTL_EQ, BONDS, GOLD]:
         weight = out['allocation'].get(ticker, 0.0)
-        # Highlight the 100% allocation
-        style = ' style="background-color: #f0fdf4; color: #15803d; font-weight: bold;"' if weight == 1.0 else ''
+        style = ' style="font-weight: bold;"' if weight > 0 and ticker in [US_EQ, INTL_EQ] else ''
         alloc_rows += f"<tr{style}><td><b>{ticker}</b></td><td>{weight:.2%}</td></tr>"
 
-    # --- Assemble the Full HTML Email ---
     html_body = f"""
     <!DOCTYPE html>
     <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Dual Momentum Signal</title>
-    </head>
+    <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f4;">
       <table role="presentation" style="width: 100%; max-width: 600px; margin: 20px auto; background-color: #ffffff; border-collapse: collapse; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-        <tr>
-          <td style="padding: 20px; text-align: center; background-color: #4a5568; color: #ffffff; border-top-left-radius: 8px; border-top-right-radius: 8px;">
-            <h2 style="margin: 0;">Dual Momentum Signal</h2>
-            <p style="margin: 5px 0 0;">for {out['as_of_date']}</p>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 25px;">
-            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-              <tr>
-                <td style="padding: 15px; background-color: {status_color}; color: #ffffff; text-align: center; border-radius: 5px;">
-                  <h3 style="margin: 0; font-size: 20px;">{out['regime']}</h3>
-                </td>
-              </tr>
-            </table>
-
-            <p style="font-size: 16px; margin: 20px 0;">
-              Winner: <b>{out['winner']}</b> (Score: {out['winner_score']:.2%})<br>
-              SMA(200) Check: Price ({sma_info['price']:.2f}) vs SMA ({sma_info['sma200']:.2f}) → <b style="color: {sma_status_color};">{sma_status_text}</b>
-            </p>
-
-            <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;">Momentum Breakdown</h3>
-            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-              {us_momentum_rows}
-              {intl_momentum_rows}
-            </table>
+        <tr><td style="padding: 20px; text-align: center; background-color: #4a5568; color: #ffffff; border-radius: 8px 8px 0 0;"><h2 style="margin: 0;">Dual Momentum Signal</h2><p style="margin: 5px 0 0;">for {out['as_of_date']}</p></td></tr>
+        <tr><td style="padding: 25px;">
+            <table role="presentation" style="width: 100%;"><tr><td style="padding: 15px; background-color: {status_color}; color: #ffffff; text-align: center; border-radius: 5px;"><h3 style="margin: 0; font-size: 20px;">{out['regime']}</h3></td></tr></table>
+            <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;">Crash Protection Status</h3>
+            <table role="presentation" style="width: 100%;">{protection_rows}</table>
             
+            {"<h3 style='border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;'>Volatility Targeting</h3><table role='presentation' style='width: 100%;'>" + volatility_rows + "</table>" if is_risk_on else ""}
+
             <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;">Target Allocation</h3>
-            <table role="presentation" style="width: 100%; border-collapse: collapse;">
-              {alloc_rows}
-            </table>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 20px; text-align: center; color: #718096; font-size: 0.8em;">
-            <p style="margin: 0;">This is an automated notification.</p>
-          </td>
-        </tr>
+            <table role="presentation" style="width: 100%;">{alloc_rows}</table>
+        </td></tr>
+        <tr><td style="padding: 20px; text-align: center; color: #718096; font-size: 0.8em;"><p style="margin: 0;">This is an automated notification.</p></td></tr>
       </table>
     </body>
     </html>
     """
     return subject, html_body
-    
+
 def send_email(subject: str, html_body: str):
     """Sends an email using credentials stored in GitHub Secrets."""
     sender = os.environ.get('GMAIL_ADDRESS')
@@ -230,4 +228,5 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
