@@ -75,7 +75,6 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
     if len(winner_prices) < 200:
       raise RuntimeError(f"Not enough data for {winner}")
 
-    # (Crash protection logic remains the same)
     slow_trigger_passed = winner_score > 0.0
     winner_price = winner_prices.iloc[-1]
     winner_sma100 = winner_prices.rolling(window=100).mean().iloc[-1]
@@ -96,7 +95,6 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
 
     if slow_trigger_passed and fast_trigger_passed:
         regime = f"RISK-ON → {winner}"
-        # Allocation is now dynamic
         final_winner_alloc = vol_based_alloc
         alloc = {US_EQ: 0.0, INTL_EQ: 0.0, BONDS: 1.0 - final_winner_alloc, GOLD: 0.0}
         alloc[winner] = final_winner_alloc
@@ -166,7 +164,6 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
     </tr>
     """
     
-    # (The rest of the function remains the same)
     vol_info = out['volatility_targeting']
     volatility_rows = ""
     if is_risk_on:
@@ -210,10 +207,8 @@ def send_email(subject: str, html_body: str):
     """Sends an email using credentials stored in GitHub Secrets."""
     sender = os.environ.get('GMAIL_ADDRESS')
     password = os.environ.get('GMAIL_APP_PASSWORD')
-    # ADD THIS LINE
     recipient = os.environ.get('EMAIL_RECIPIENT') 
 
-    # UPDATE THE CHECK
     if not all([sender, password, recipient]):
         print("ERROR: One or more secrets (GMAIL_ADDRESS, GMAIL_APP_PASSWORD, EMAIL_RECIPIENT) not found.", file=sys.stderr)
         return
@@ -221,7 +216,6 @@ def send_email(subject: str, html_body: str):
     msg = EmailMessage()
     msg['Subject'] = subject
     msg['From'] = sender
-    # UPDATE THIS LINE
     msg['To'] = recipient
     msg.set_content("Please enable HTML to view this message.")
     msg.add_alternative(html_body, subtype='html')
@@ -258,6 +252,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 
