@@ -95,11 +95,25 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
     }
 
 def format_results_for_email(out: dict) -> tuple[str, str]:
-    """Formats the allocation results into an HTML string for the email body."""
+    """Formats the allocation results into a detailed HTML string for the email body."""
     subject = f"Dual Momentum Signal: {out['regime']}"
     sma_info = out['sma_check']
     sma_status = "PASS" if sma_info['is_above'] else "FAIL"
     
+    # Helper function to build the detailed momentum rows for one asset
+    def _build_momentum_rows(name, score, comps):
+        rows = f'<tr><td colspan="2"><b>{name}</b></td><td style="text-align:right;"><b>{score:.2%}</b></td></tr>'
+        for m, r, base_ts, base_px, last_px in comps:
+            rows += (f'<tr><td style="padding-left: 20px;"><em>{m}-month</em></td>'
+                     f'<td style="font-size: 0.8em; color: #555;"><em>({base_ts.date()})</em></td>'
+                     f'<td style="text-align:right;"><em>{r:.2%}</em></td></tr>')
+        return rows
+
+    # Build the momentum breakdown table
+    us_momentum_rows = _build_momentum_rows(US_EQ, out['us_momentum_score'], out['us_comps'])
+    intl_momentum_rows = _build_momentum_rows(INTL_EQ, out['intl_momentum_score'], out['intl_comps'])
+    
+    # Build the allocation table
     alloc_rows = ""
     for ticker in [US_EQ, INTL_EQ, BONDS, GOLD]:
         weight = out['allocation'].get(ticker, 0.0)
@@ -109,8 +123,8 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
     <html>
       <head>
         <style>
-          body {{ font-family: sans-serif; }}
-          table {{ border-collapse: collapse; }}
+          body {{ font-family: sans-serif; color: #333; }}
+          table {{ border-collapse: collapse; width: 100%; max-width: 400px; }}
           th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
         </style>
       </head>
@@ -121,6 +135,13 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
           Winner: {out['winner']} (Score: {out['winner_score']:.2%})<br>
           SMA(200) Check: Price ({sma_info['price']:.2f}) vs SMA ({sma_info['sma200']:.2f}) → <b>{sma_status}</b>
         </p>
+
+        <h3>Momentum Score Breakdown:</h3>
+        <table>
+          {us_momentum_rows}
+          {intl_momentum_rows}
+        </table>
+
         <h3>Target Allocation:</h3>
         <table>
           {alloc_rows}
@@ -130,7 +151,7 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
     </html>
     """
     return subject, html_body
-
+    
 def send_email(subject: str, html_body: str):
     """Sends an email using credentials stored in GitHub Secrets."""
     sender = os.environ.get('GMAIL_ADDRESS')
@@ -181,4 +202,5 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
+
     main()
