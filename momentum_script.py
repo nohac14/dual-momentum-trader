@@ -95,59 +95,85 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
     }
 
 def format_results_for_email(out: dict) -> tuple[str, str]:
-    """Formats the allocation results into a detailed HTML string for the email body."""
-    subject = f"Dual Momentum Signal: {out['regime']}"
-    sma_info = out['sma_check']
-    sma_status = "PASS" if sma_info['is_above'] else "FAIL"
+    """Formats the allocation results into a detailed, mobile-friendly HTML email."""
     
-    # Helper function to build the detailed momentum rows for one asset
+    # --- Dynamic Colors and Text ---
+    is_risk_on = "RISK-ON" in out['regime']
+    status_color = "#28a745" if is_risk_on else "#fd7e14"  # Green for ON, Orange for OFF
+    sma_info = out['sma_check']
+    sma_status_text = "PASS" if sma_info['is_above'] else "FAIL"
+    sma_status_color = "#28a745" if sma_info['is_above'] else "#dc3545"  # Green for PASS, Red for FAIL
+    subject = f"Dual Momentum Signal: {out['regime']}"
+
+    # --- Build HTML Table Rows ---
     def _build_momentum_rows(name, score, comps):
-        rows = f'<tr><td colspan="2"><b>{name}</b></td><td style="text-align:right;"><b>{score:.2%}</b></td></tr>'
-        for m, r, base_ts, base_px, last_px in comps:
-            rows += (f'<tr><td style="padding-left: 20px;"><em>{m}-month</em></td>'
-                     f'<td style="font-size: 0.8em; color: #555;"><em>({base_ts.date()})</em></td>'
-                     f'<td style="text-align:right;"><em>{r:.2%}</em></td></tr>')
+        rows = f'<tr><td colspan="2" style="padding-top: 15px;"><b>{name}</b></td><td style="text-align:right;"><b>{score:.2%}</b></td></tr>'
+        for m, r, base_ts, _, _ in comps:
+            rows += (f'<tr><td style="padding-left: 20px; font-size: 0.9em; color: #555;"><em>{m}-month</em></td>'
+                     f'<td style="font-size: 0.8em; color: #777;"><em>({base_ts.date()})</em></td>'
+                     f'<td style="text-align:right; font-size: 0.9em; color: #555;"><em>{r:.2%}</em></td></tr>')
         return rows
 
-    # Build the momentum breakdown table
     us_momentum_rows = _build_momentum_rows(US_EQ, out['us_momentum_score'], out['us_comps'])
     intl_momentum_rows = _build_momentum_rows(INTL_EQ, out['intl_momentum_score'], out['intl_comps'])
     
-    # Build the allocation table
     alloc_rows = ""
     for ticker in [US_EQ, INTL_EQ, BONDS, GOLD]:
         weight = out['allocation'].get(ticker, 0.0)
-        alloc_rows += f"<tr><td><b>{ticker}</b></td><td>{weight:.2%}</td></tr>"
+        # Highlight the 100% allocation
+        style = ' style="background-color: #f0fdf4; color: #15803d; font-weight: bold;"' if weight == 1.0 else ''
+        alloc_rows += f"<tr{style}><td><b>{ticker}</b></td><td>{weight:.2%}</td></tr>"
 
+    # --- Assemble the Full HTML Email ---
     html_body = f"""
+    <!DOCTYPE html>
     <html>
-      <head>
-        <style>
-          body {{ font-family: sans-serif; color: #333; }}
-          table {{ border-collapse: collapse; width: 100%; max-width: 400px; }}
-          th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
-        </style>
-      </head>
-      <body>
-        <h2>Dual Momentum Signal for {out['as_of_date']}</h2>
-        <p><b>Regime: {out['regime']}</b></p>
-        <p>
-          Winner: {out['winner']} (Score: {out['winner_score']:.2%})<br>
-          SMA(200) Check: Price ({sma_info['price']:.2f}) vs SMA ({sma_info['sma200']:.2f}) → <b>{sma_status}</b>
-        </p>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Dual Momentum Signal</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f4;">
+      <table role="presentation" style="width: 100%; max-width: 600px; margin: 20px auto; background-color: #ffffff; border-collapse: collapse; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+        <tr>
+          <td style="padding: 20px; text-align: center; background-color: #4a5568; color: #ffffff; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+            <h2 style="margin: 0;">Dual Momentum Signal</h2>
+            <p style="margin: 5px 0 0;">for {out['as_of_date']}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 25px;">
+            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding: 15px; background-color: {status_color}; color: #ffffff; text-align: center; border-radius: 5px;">
+                  <h3 style="margin: 0; font-size: 20px;">{out['regime']}</h3>
+                </td>
+              </tr>
+            </table>
 
-        <h3>Momentum Score Breakdown:</h3>
-        <table>
-          {us_momentum_rows}
-          {intl_momentum_rows}
-        </table>
+            <p style="font-size: 16px; margin: 20px 0;">
+              Winner: <b>{out['winner']}</b> (Score: {out['winner_score']:.2%})<br>
+              SMA(200) Check: Price ({sma_info['price']:.2f}) vs SMA ({sma_info['sma200']:.2f}) → <b style="color: {sma_status_color};">{sma_status_text}</b>
+            </p>
 
-        <h3>Target Allocation:</h3>
-        <table>
-          {alloc_rows}
-        </table>
-        <p><small>This is an automated notification.</small></p>
-      </body>
+            <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;">Momentum Breakdown</h3>
+            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+              {us_momentum_rows}
+              {intl_momentum_rows}
+            </table>
+            
+            <h3 style="border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; margin-top: 30px;">Target Allocation</h3>
+            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+              {alloc_rows}
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 20px; text-align: center; color: #718096; font-size: 0.8em;">
+            <p style="margin: 0;">This is an automated notification.</p>
+          </td>
+        </tr>
+      </table>
+    </body>
     </html>
     """
     return subject, html_body
@@ -204,3 +230,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
