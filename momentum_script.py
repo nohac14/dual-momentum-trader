@@ -147,7 +147,7 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
     </tr>
     <tr>
         <td colspan="2" style="padding-left:15px; font-size:0.9em; color:#555;">
-            {'''- Blended Score: <b style="color:{score_color};">{slow_check['score']:.2%}</b>'''}
+            - Blended Score: <b style="color:{score_color};">{slow_check['score']:.2%}</b>
         </td>
     </tr>
     <tr>
@@ -258,6 +258,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 
