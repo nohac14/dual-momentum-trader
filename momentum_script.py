@@ -135,15 +135,31 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
         text = "PASS" if passed else "FAIL"
         return f'<b style="color: {color};">{text}</b>'
 
-    # This is the section that has been updated with more detail
+    # --- This is the updated, cleaner section ---
+    price_color = "#28a745" if fast_check['is_above_sma100'] else "#dc3545"
+    ret_color = "#28a745" if fast_check['is_6m_positive'] else "#dc3545"
     protection_rows = f"""
-    <tr><td><b>Slow Trigger</b> (Blended Score > 0%)</td><td style="text-align:right;">{status_tag(slow_check['passed'])}</td></tr>
-    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- Blended Score: {slow_check['score']:.2%}</td></tr>
-    <tr><td style="padding-top:10px;"><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td><td style="text-align:right; padding-top:10px;">{status_tag(fast_check['passed'])}</td></tr>
-    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- Price ({fast_check['price']:.2f}) vs 100d SMA ({fast_check['sma100']:.2f})</td><td style="text-align:right;">{status_tag(fast_check['is_above_sma100'])}</td></tr>
-    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- 6-Month Return ({fast_check.get('6m_return', 0):.2%}) > 0%</td><td style="text-align:right;">{status_tag(fast_check['is_6m_positive'])}</td></tr>
+    <tr>
+        <td><b>Slow Trigger</b> (Blended Score > 0%)</td>
+        <td style="text-align:right;">{status_tag(slow_check['passed'])}</td>
+    </tr>
+    <tr>
+        <td style="padding-top:10px;"><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td>
+        <td style="text-align:right; padding-top:10px;">{status_tag(fast_check['passed'])}</td>
+    </tr>
+    <tr>
+        <td colspan="2" style="padding-left:15px; font-size:0.9em; color:#555;">
+            - Price <b style="color:{price_color};">{fast_check['price']:.2f}</b> vs 100d SMA ({fast_check['sma100']:.2f})
+        </td>
+    </tr>
+    <tr>
+        <td colspan="2" style="padding-left:15px; font-size:0.9em; color:#555;">
+            - 6-Month Return: <b style="color:{ret_color};">{fast_check.get('6m_return', 0):.2%}</b>
+        </td>
+    </tr>
     """
     
+    # (The rest of the function remains the same)
     vol_info = out['volatility_targeting']
     volatility_rows = ""
     if is_risk_on:
@@ -159,7 +175,6 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
         style = ' style="font-weight: bold;"' if weight > 0 and ticker in [US_EQ, INTL_EQ] else ''
         alloc_rows += f"<tr{style}><td><b>{ticker}</b></td><td>{weight:.2%}</td></tr>"
 
-    # The main HTML structure remains the same
     html_body = f"""
     <!DOCTYPE html>
     <html>
@@ -236,6 +251,7 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
 
