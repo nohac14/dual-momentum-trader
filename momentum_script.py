@@ -120,23 +120,30 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
 def format_results_for_email(out: dict) -> tuple[str, str]:
     """Formats the allocation results into a detailed, mobile-friendly HTML email."""
     
+    # --- Dynamic Colors and Text ---
     is_risk_on = "RISK-ON" in out['regime']
     status_color = "#28a745" if is_risk_on else "#fd7e14"
     subject = f"Dual Momentum Signal: {out['regime']}"
     
-    # (Protection checks section remains the same)
+    # --- Build HTML for Protection Checks ---
     checks = out['protection_checks']
-    slow_check, fast_check = checks['slow_trigger'], checks['fast_trigger']
+    slow_check = checks['slow_trigger']
+    fast_check = checks['fast_trigger']
+    
     def status_tag(passed):
-        color, text = ("#28a745", "PASS") if passed else ("#dc3545", "FAIL")
+        color = "#28a745" if passed else "#dc3545"
+        text = "PASS" if passed else "FAIL"
         return f'<b style="color: {color};">{text}</b>'
 
+    # This is the section that has been updated with more detail
     protection_rows = f"""
     <tr><td><b>Slow Trigger</b> (Blended Score > 0%)</td><td style="text-align:right;">{status_tag(slow_check['passed'])}</td></tr>
-    <tr><td><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td><td style="text-align:right;">{status_tag(fast_check['passed'])}</td></tr>
+    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- Blended Score: {slow_check['score']:.2%}</td></tr>
+    <tr><td style="padding-top:10px;"><b>Fast Trigger</b> (Price > 100d SMA AND 6m Ret > 0%)</td><td style="text-align:right; padding-top:10px;">{status_tag(fast_check['passed'])}</td></tr>
+    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- Price ({fast_check['price']:.2f}) vs 100d SMA ({fast_check['sma100']:.2f})</td><td style="text-align:right;">{status_tag(fast_check['is_above_sma100'])}</td></tr>
+    <tr><td style="padding-left:15px; font-size:0.9em; color:#555;">- 6-Month Return ({fast_check.get('6m_return', 0):.2%}) > 0%</td><td style="text-align:right;">{status_tag(fast_check['is_6m_positive'])}</td></tr>
     """
-
-    # --- NEW: Build HTML for Volatility Targeting ---
+    
     vol_info = out['volatility_targeting']
     volatility_rows = ""
     if is_risk_on:
@@ -152,6 +159,7 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
         style = ' style="font-weight: bold;"' if weight > 0 and ticker in [US_EQ, INTL_EQ] else ''
         alloc_rows += f"<tr{style}><td><b>{ticker}</b></td><td>{weight:.2%}</td></tr>"
 
+    # The main HTML structure remains the same
     html_body = f"""
     <!DOCTYPE html>
     <html>
@@ -228,5 +236,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
 
 
