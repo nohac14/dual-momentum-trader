@@ -343,78 +343,65 @@ def decide_allocation(asof: dt.date | None = None) -> dict:
 
 # ---------- Email (updated to show bond choice) ----------
 def format_results_for_email(out: dict) -> tuple[str, str]:
+    """Minimal email: headline + trade date + clean allocation table."""
     is_risk_on = out['regime'].startswith("RISK-ON")
     status_color = "#28a745" if is_risk_on else "#fd7e14"
     subject = f"Dual Momentum Signal ({out['signal_date']}): {out['regime']}"
 
-    # Allocation rows (ensure the selected bond is included)
+    # Build labels WITH tickers (so don't add ({t}) again in the row)
     tick_order = [US_EQ, INTL_EQ, out["selected_bond"], GOLD, CASH]
     labels = {
-    US_EQ: f"US ({US_EQ})",
-    INTL_EQ: f"Intl ({INTL_EQ})",
-    GOLD: f"Gold ({GOLD})",
-    CASH: f"Cash/T-Bills ({CASH})",
-    out["selected_bond"]: f"Bonds ({out['selected_bond']})"
+        US_EQ: f"US ({US_EQ})",
+        INTL_EQ: f"Intl ({INTL_EQ})",
+        out["selected_bond"]: f"Bonds ({out['selected_bond']})",
+        GOLD: f"Gold ({GOLD})",
+        CASH: f"Cash/T-Bills ({CASH})",
     }
 
+    # Allocation table (no duplicate ticker printing)
     alloc_rows = ""
     for t in tick_order:
         w = out["allocation"].get(t, 0.0)
         strong = ' style="font-weight:bold;"' if (w > 0 and t in [US_EQ, INTL_EQ]) else ""
-        alloc_rows += f'<tr{strong}><td><b>{labels[t]}</b></td><td style="text-align:right;">{w:.2%}</td></tr>'
+        alloc_rows += (
+            f'<tr{strong}>'
+            f'<td><b>{labels[t]}</b></td>'
+            f'<td style="text-align:right;">{w:.2%}</td>'
+            f'</tr>'
+        )
 
-    # Compact ensemble summary
-    ensemble_html_rows = ""
-    for r in out["ensemble_details"][:8]:
-        gate_label = "12m>0" if r["gate"] == "abs12" else "MA~10"
-        ensemble_html_rows += f"<tr><td>LB {r['lbs']} | {gate_label}</td><td style='text-align:right;'>{r['regime']}</td></tr>"
-
-    # Macro snippet
-    ms = out["macro_signals"]
-    macro_block = f"""
-      <p style="margin:8px 0 0; font-size:0.9em;">
-        Defensive bond: <b>{out['selected_bond']}</b> (macro: <b>{out['macro_regime']}</b>)<br/>
-        Duration pref (TLT−BND avg 6/12m): <b>{ms['duration_pref']:+.2%}</b>,
-        Breakeven change (TIP−IEF avg 6/12m): <b>{ms['breakeven_drop']:+.2%}</b>,
-        Commodities 6m (DBC): <b>{ms['commodities_trend_6m']:+.2%}</b>
-      </p>
-    """
-
+    # Minimal HTML
     html_body = f"""
     <!DOCTYPE html>
     <html>
     <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-    <body style="margin:0; padding:0; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color:#f4f4f4;">
-      <table role="presentation" style="width:100%; max-width:600px; margin:20px auto; background-color:#ffffff; border-collapse:collapse; border-radius:8px; box-shadow:0 4px 8px rgba(0,0,0,0.1);">
-        <tr><td style="padding:20px; text-align:center; background-color:#4a5568; color:#ffffff; border-radius:8px 8px 0 0;">
-            <h2 style="margin:0;">Dual Momentum (Month-End)</h2>
-            <p style="margin:5px 0 0;">Signal Date: {out['signal_date']} | Trade on: {out['trade_date']}</p>
-        </td></tr>
+    <body style="margin:0; padding:0; font-family:-apple-system, BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background-color:#f7f7f8;">
+      <table role="presentation" style="width:100%; max-width:600px; margin:20px auto; background:#fff; border-collapse:collapse; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,.06);">
+        <tr>
+          <td style="padding:20px; text-align:center; background:#1f2937; color:#fff; border-radius:10px 10px 0 0;">
+            <h2 style="margin:0;">Dual Momentum</h2>
+            <p style="margin:6px 0 0; opacity:.9;">Signal Date: {out['signal_date']} &nbsp;•&nbsp; Trade on: <b>{out['trade_date']}</b></p>
+          </td>
+        </tr>
 
-        <tr><td style="padding:25px;">
-            <table role="presentation" style="width:100%;"><tr>
-                <td style="padding:15px; background-color:{status_color}; color:#ffffff; text-align:center; border-radius:5px;">
-                    <h3 style="margin:0; font-size:20px;">{out['regime']}</h3>
-                </td>
-            </tr></table>
+        <tr>
+          <td style="padding:22px;">
+            <div style="padding:14px 16px; background:{status_color}; color:#fff; text-align:center; border-radius:8px;">
+              <strong style="font-size:18px;">{out['regime']}</strong>
+            </div>
 
-            <h3 style="border-bottom:2px solid #e2e8f0; padding-bottom:5px; margin-top:30px;">Target Allocation</h3>
-            <table role="presentation" style="width:100%;">{alloc_rows}</table>
+            <h3 style="border-bottom:2px solid #e5e7eb; padding-bottom:6px; margin-top:26px; margin-bottom:12px;">Target Allocation</h3>
+            <table role="presentation" style="width:100%; border-collapse:separate; border-spacing:0 6px;">
+              {alloc_rows}
+            </table>
+          </td>
+        </tr>
 
-            <h3 style="border-bottom:2px solid #e2e8f0; padding-bottom:5px; margin-top:30px;">Defensive Bond Selection</h3>
-            {macro_block}
-
-            <h3 style="border-bottom:2px solid #e2e8f0; padding-bottom:5px; margin-top:30px;">Ensemble (sample)</h3>
-            <table role="presentation" style="width:100%;">{ensemble_html_rows}</table>
-
-            <p style="color:#718096; font-size:0.85em; margin-top:20px;">
-              Config: lookbacks={out['config']['rel_lookbacks']}, gates={out['config']['abs_gates']}, target vol={out['config']['target_vol']:.0%}, vol window={out['config']['vol_window_days']}d, floor/cap=({int(out['config']['equity_floor']*100)}%–{int(out['config']['equity_cap']*100)}%), defensive={int(DEFENSIVE_SPLIT[0]*100)}% Bonds / {int(DEFENSIVE_SPLIT[1]*100)}% Gold
-            </p>
-        </td></tr>
-
-        <tr><td style="padding:20px; text-align:center; color:#718096; font-size:0.8em;">
-            <p style="margin:0;">This is an automated notification.</p>
-        </td></tr>
+        <tr>
+          <td style="padding:14px 20px 20px; text-align:center; color:#6b7280; font-size:12px;">
+            This is an automated monthly notification.
+          </td>
+        </tr>
       </table>
     </body>
     </html>
@@ -477,5 +464,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
