@@ -349,14 +349,19 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
 
     # Allocation rows (ensure the selected bond is included)
     tick_order = [US_EQ, INTL_EQ, out["selected_bond"], GOLD, CASH]
-    labels = {US_EQ:"US", INTL_EQ:"Intl", GOLD:"Gold", CASH:"Cash/T-Bills"}
-    labels[out["selected_bond"]] = f"Bonds ({out['selected_bond']})"
+    labels = {
+    US_EQ: f"US ({US_EQ})",
+    INTL_EQ: f"Intl ({INTL_EQ})",
+    GOLD: f"Gold ({GOLD})",
+    CASH: f"Cash/T-Bills ({CASH})",
+    out["selected_bond"]: f"Bonds ({out['selected_bond']})"
+    }
 
     alloc_rows = ""
     for t in tick_order:
         w = out["allocation"].get(t, 0.0)
         strong = ' style="font-weight:bold;"' if (w > 0 and t in [US_EQ, INTL_EQ]) else ""
-        alloc_rows += f'<tr{strong}><td><b>{labels.get(t, t)}</b></td><td style="text-align:right;">{w:.2%}</td></tr>'
+        alloc_rows += f'<tr{strong}><td><b>{labels[t]}</b></td><td style="text-align:right;">{w:.2%}</td></tr>'
 
     # Compact ensemble summary
     ensemble_html_rows = ""
@@ -472,4 +477,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
