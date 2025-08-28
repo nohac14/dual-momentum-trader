@@ -1,4 +1,4 @@
-# Dual Momentum Strategy — Automated (Roth IRA Friendly)
+# Dual Momentum Strategy
 
 This project implements a **tuned dual momentum strategy** that runs automatically each month, sends you an **email allocation signal**, and can also be inspected manually via a **console version**.  
 The system includes:
