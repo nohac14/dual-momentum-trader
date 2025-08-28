@@ -380,7 +380,7 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
         <tr>
           <td style="padding:20px; text-align:center; background:#1f2937; color:#fff; border-radius:10px 10px 0 0;">
             <h2 style="margin:0;">Dual Momentum</h2>
-            <p style="margin:6px 0 0; opacity:.9;">Signal Date: {out['signal_date']} &nbsp;•&nbsp; Trade on: <b>{out['trade_date']}</b></p>
+            <p style="margin:6px 0 0; color:#ffffff;">Signal Date: {out['signal_date']} &nbsp;•&nbsp; Trade on: <b>{out['trade_date']}</b></p>
           </td>
         </tr>
 
@@ -464,6 +464,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
