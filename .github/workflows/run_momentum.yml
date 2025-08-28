@@ -2,31 +2,65 @@ name: Run Monthly Momentum Script
 
 on:
   schedule:
-    # Runs at 20:00 UTC (4 PM EDT) on the 28th day of every month
-    - cron: '0 20 28 * *'
-  workflow_dispatch: # Allows you to run it manually from the Actions tab
+    # Run on the 1st of every month at 21:10 UTC (~5:10 PM New York, after month-end settles)
+    - cron: '10 21 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: momentum-monthly
+  cancel-in-progress: false
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    env:
+      TZ: America/New_York
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PYTHONUNBUFFERED: '1'
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip wheel setuptools
           pip install -r requirements.txt
 
-      - name: Run Momentum Script
-        # This passes your secrets to the script as environment variables
-        env:
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
-        run: python momentum_script.py
+      - name: Run momentum script (attempt 1)
+        id: run1
+        run: |
+          python momentum_script.py > run.log 2>&1 || echo "FAILED" > .failed
+
+      - name: Retry once on failure (attempt 2)
+        if: hashFiles('.failed') != ''
+        run: |
+          echo "First attempt failed; retrying in 20s..."
+          sleep 20
+          python momentum_script.py >> run.log 2>&1 || exit 1
+
+      - name: Upload logs/artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: momentum-run-${{ github.run_id }}
+          path: |
+            run.log
+            # If your script writes the HTML email body to /tmp/email.html, include it:
+            /tmp/email.html
