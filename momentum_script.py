@@ -379,9 +379,10 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
       <table role="presentation" style="width:100%; max-width:600px; margin:20px auto; background:#fff; border-collapse:collapse; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,.06);">
         <tr>
           <td style="padding:20px; text-align:center; background:#1f2937; color:#fff; border-radius:10px 10px 0 0;">
-            <h2 style="margin:0;">Dual Momentum</h2>
-            <p style="margin:6px 0 0; color:#ffffff;">Signal Date: {out['signal_date']} &nbsp;•&nbsp; Trade on: <b>{out['trade_date']}</b></p>
-          </td>
+              <h2 style="margin:0;">Dual Momentum</h2>
+              <p style="margin:6px 0 0; color:#ffffff;">Signal Date: <b>{out['signal_date']}</b></p>
+              <p style="margin:4px 0 0; color:#ffffff;">Trade on: <b>{out['trade_date']}</b></p>
+            </td>
         </tr>
 
         <tr>
@@ -464,6 +465,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
