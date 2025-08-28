@@ -356,7 +356,7 @@ def format_results_for_email(out: dict) -> tuple[str, str]:
     for t in tick_order:
         w = out["allocation"].get(t, 0.0)
         strong = ' style="font-weight:bold;"' if (w > 0 and t in [US_EQ, INTL_EQ]) else ""
-        alloc_rows += f'<tr{strong}><td><b>{labels.get(t, t)} ({t})</b></td><td style="text-align:right;">{w:.2%}</td></tr>'
+        alloc_rows += f'<tr{strong}><td><b>{labels.get(t, t)}</b></td><td style="text-align:right;">{w:.2%}</td></tr>'
 
     # Compact ensemble summary
     ensemble_html_rows = ""
@@ -472,3 +472,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
