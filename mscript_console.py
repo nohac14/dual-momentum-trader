@@ -24,7 +24,9 @@ import yfinance as yf
 from pandas.tseries.offsets import MonthEnd
 
 # --------- CONFIG ---------
-US_EQ   = "VOO"
+US_EQ_SPY = "SPMO"
+US_EQ_QQQ = "QQQM"
+US_EQ_OPTIONS = [US_EQ_SPY, US_EQ_QQQ]  # Strategy picks the stronger of these two
 INTL_EQ = "VXUS"
 GOLD    = "IAUM"   # Falls back to IAU for history
 CASH    = "BIL"    # Risk-ON residual
@@ -133,7 +135,7 @@ def relative_momentum_score(prices: pd.Series, asof_ts: pd.Timestamp, lookbacks:
         idx = min(idx, s.index.get_loc(asof_ts))
         base_px = float(s.iloc[idx])
         comps.append((m, (last_px / base_px) - 1.0 if base_px > 0 else np.nan,
-                      s.index[idx], base_px, last_px))
+                          s.index[idx], base_px, last_px))
     returns = [r for _, r, *_ in comps if pd.notna(r)]
     score = float(np.mean(returns)) if returns else 0.0
     return score, comps
@@ -196,8 +198,8 @@ def classify_macro(adj_close: pd.DataFrame, asof_ts: pd.Timestamp) -> dict:
     ief6, ief12 = tr("IEF", MACRO_LB_SHORT), tr("IEF", MACRO_LB_LONG)
     dbc6, dbc12 = tr("DBC", MACRO_LB_SHORT), tr("DBC", MACRO_LB_LONG)
 
-    duration_pref   = ((tlt6 + tlt12)/2) - ((bnd6 + bnd12)/2)   # >0 → favor long duration (deflationary vibe)
-    breakeven_drop  = ((tip6 + tip12)/2) - ((ief6 + ief12)/2)   # <0 → falling breakevens
+    duration_pref   = ((tlt6 + tlt12)/2) - ((bnd6 + bnd12)/2)  # >0 → favor long duration (deflationary vibe)
+    breakeven_drop  = ((tip6 + tip12)/2) - ((ief6 + ief12)/2)  # <0 → falling breakevens
     commodities_6m  = dbc6
 
     deflation_votes = 0
@@ -256,7 +258,7 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
 
     # Tickers needed for momentum + classifier (dedup handled in safe_adj_close)
     tickers = [
-        US_EQ, INTL_EQ, GOLD, CASH,
+        *US_EQ_OPTIONS, INTL_EQ, GOLD, CASH,
         BOND_DEF_NEUTRAL, BOND_DEF_INFLATION, BOND_DEF_DEFLATION,
         *CLASSIFIER_TICKERS
     ]
@@ -271,11 +273,20 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
 
     per_model = []
     for lbs in REL_LOOKBACKS_ENSEMBLE:
-        us_score, us_comps = relative_momentum_score(adj_close[US_EQ], signal_ts, lbs)
+        # Calculate scores for all equity options
+        us_scores = {
+            ticker: relative_momentum_score(adj_close[ticker], signal_ts, lbs)
+            for ticker in US_EQ_OPTIONS
+        }
         intl_score, intl_comps = relative_momentum_score(adj_close[INTL_EQ], signal_ts, lbs)
 
-        if us_score >= intl_score:
-            winner, winner_score, winner_comps = US_EQ, us_score, us_comps
+        # Find the best performing US equity ticker
+        us_winner_ticker = max(us_scores, key=lambda t: us_scores[t][0])
+        us_winner_score, us_winner_comps = us_scores[us_winner_ticker]
+
+        # Compare the US winner with the International winner to get the final equity winner
+        if us_winner_score >= intl_score:
+            winner, winner_score, winner_comps = us_winner_ticker, us_winner_score, us_winner_comps
         else:
             winner, winner_score, winner_comps = INTL_EQ, intl_score, intl_comps
 
@@ -283,13 +294,17 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
             abs_check = absolute_gate(adj_close[winner], signal_ts, gate)
             recent_vol, eq_w = vol_target(adj_close[winner], signal_ts)
 
+            # Initialize allocation dict with all possible equity assets
+            alloc = {t: 0.0 for t in US_EQ_OPTIONS}
+            alloc[INTL_EQ] = 0.0
+
             if abs_check["passed"]:
                 regime = f"RISK-ON → {winner}"
-                alloc = {US_EQ: 0.0, INTL_EQ: 0.0, selected_bond: 0.0, GOLD: 0.0, CASH: 1.0 - eq_w}
+                alloc.update({selected_bond: 0.0, GOLD: 0.0, CASH: 1.0 - eq_w})
                 alloc[winner] = eq_w
             else:
                 regime = "RISK-OFF → Defensive"
-                alloc = {US_EQ: 0.0, INTL_EQ: 0.0, selected_bond: DEFENSIVE_SPLIT[0], GOLD: DEFENSIVE_SPLIT[1], CASH: 0.0}
+                alloc.update({selected_bond: DEFENSIVE_SPLIT[0], GOLD: DEFENSIVE_SPLIT[1], CASH: 0.0})
 
             per_model.append({
                 "lbs": lbs,
@@ -304,8 +319,8 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
                 "alloc": alloc
             })
 
-    # Average allocations across ensemble; ensure we print all relevant keys
-    keys = [US_EQ, INTL_EQ, selected_bond, GOLD, CASH]
+    # Average allocations across ensemble; ensure we include all relevant keys
+    keys = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
     final_alloc = {k: 0.0 for k in keys}
     for r in per_model:
         for k, v in r["alloc"].items():
@@ -360,24 +375,32 @@ def print_config(c: C, cfg: Dict[str, Any]):
 
 def print_allocation(c: C, alloc: Dict[str, float], selected_bond: str, title="Final Averaged Allocation"):
     print_header(c, f"\n{title}")
-    order = [US_EQ, INTL_EQ, selected_bond, GOLD, CASH]
-    labels = {US_EQ:"US", INTL_EQ:"Intl", GOLD:"Gold", CASH:"Cash/T-Bills", selected_bond: f"Bonds ({selected_bond})"}
+    order = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
+    labels = {
+        US_EQ_SPY: "US (S&P 500)",
+        US_EQ_QQQ: "US (Nasdaq 100)",
+        INTL_EQ: "Intl",
+        GOLD: "Gold",
+        CASH: "Cash/T-Bills",
+        selected_bond: f"Bonds ({selected_bond})"
+    }
     for t in order:
+        if t not in alloc: continue
         w = alloc.get(t, 0.0)
-        color = c.green if (t in [US_EQ, INTL_EQ] and w > 0) else c.cyan if t == CASH else c.yellow
-        print(f"  {labels[t]:16s} ({t}): {color}{pct(w)}{c.reset}")
+        color = c.green if (t in US_EQ_OPTIONS or t == INTL_EQ) and w > 0 else c.cyan if t == CASH else c.yellow
+        print(f"  {labels.get(t, t):16s} ({t}): {color}{pct(w)}{c.reset}")
 
 def print_macro_block(c: C, out: Dict[str, Any]):
     ms = out["macro_signals"]
     print_header(c, "\nMacro Classifier (month-end)")
     print(f"  Macro regime: {c.bold}{out['macro_regime']}{c.reset}   Defensive bond: {c.bold}{out['selected_bond']}{c.reset}")
-    print(f"  duration_pref (TLT−BND avg 6/12m): {ms['duration_pref']:+.2%}  "
-          f"breakeven_drop (TIP−IEF avg 6/12m): {ms['breakeven_drop']:+.2%}  "
+    print(f"  duration_pref (TLT−BND avg 6/12m): {ms['duration_pref']:+.2%}   "
+          f"breakeven_drop (TIP−IEF avg 6/12m): {ms['breakeven_drop']:+.2%}   "
           f"commodities 6m (DBC): {ms['commodities_trend_6m']:+.2%}")
 
 def print_ensemble_table(c: C, rows: List[Dict[str, Any]], limit: int):
     print_header(c, "\nEnsemble Members")
-    print("  #  Lookbacks      Gate    Winner  RelScore   AbsGate   AbsMetric              RecentVol  EqW    Regime")
+    print("  #  Lookbacks      Gate     Winner   RelScore   AbsGate   AbsMetric               RecentVol  EqW    Regime")
     print("  -- -------------- ------- ------- ---------- --------- --------------------- ---------- ------ ---------------------------")
     for i, r in enumerate(rows[:max(1, limit)]):
         lbs = f"{r['lbs']}"
@@ -404,7 +427,7 @@ def print_momentum_components(c: C, r: Dict[str, Any], idx: int):
     print_header(c, f"\nDetails for ensemble member #{idx+1}: LB={r['lbs']}, gate={'12m>0' if r['gate']=='abs12' else 'MA~10'}")
     print(f"  Winner: {c.bold}{r['winner']}{c.reset}  | RelScore: {r['winner_score']:+.4f}  | Regime: {r['regime']}")
     print("  Relative momentum components:")
-    print("    m   return     base_ts      base_px   last_px")
+    print("    m   return     base_ts     base_px   last_px")
     for m, ret, base_ts, base_px, last_px in r["winner_comps"]:
         print(f"   {m:>2}  {ret:>7.2%}  {str(pd.Timestamp(base_ts).date()):>10s}   {base_px:>8.2f}  {last_px:>8.2f}")
     if r["gate"] == "abs12":
@@ -416,7 +439,8 @@ def print_momentum_components(c: C, r: Dict[str, Any], idx: int):
     print(f"  Vol targeting: recent_vol={r['recent_vol']:.2%}  eq_weight={r['eq_weight']:.2%}")
     print("  Allocation:")
     for k, v in r["alloc"].items():
-        print(f"    {k:6s}: {pct(v)}")
+        if v > 1e-6: # Print only non-zero allocations
+            print(f"    {k:6s}: {pct(v)}")
 
 # ---------- CLI ----------
 def parse_args():
@@ -432,6 +456,8 @@ def parse_args():
 
 def to_csv_rows(per_model: List[Dict[str, Any]], selected_bond: str) -> pd.DataFrame:
     recs = []
+    # Define the full set of possible allocation keys
+    alloc_keys = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
     for r in per_model:
         if r["gate"] == "abs12":
             abs_val = r["abs_check"]["detail"].get("abs12", np.nan)
@@ -449,12 +475,10 @@ def to_csv_rows(per_model: List[Dict[str, Any]], selected_bond: str) -> pd.DataF
             "eq_weight": r["eq_weight"],
             "regime": r["regime"],
             "selected_bond": selected_bond,
-            "alloc_US": r["alloc"].get(US_EQ, 0.0),
-            "alloc_INTL": r["alloc"].get(INTL_EQ, 0.0),
-            "alloc_BOND": r["alloc"].get(selected_bond, 0.0),
-            "alloc_GOLD": r["alloc"].get(GOLD, 0.0),
-            "alloc_CASH": r["alloc"].get(CASH, 0.0),
         }
+        # Add allocation columns dynamically
+        for t in alloc_keys:
+            row[f"alloc_{t}"] = r["alloc"].get(t, 0.0)
         recs.append(row)
     return pd.DataFrame.from_records(recs)
 
