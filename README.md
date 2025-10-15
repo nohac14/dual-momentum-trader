@@ -143,4 +143,3 @@ README.md               # This file
 
   - Designed with Roth IRA / other tax-sheltered accounts in mind, since monthly rebalancing generates no tax drag.
   - Uses **ETFs instead of mutual funds** for automation & intraday data (**`SPMO`**, **`QQQM`**, **`IQLT`**, **`DIVI`**, `TLT`, `BND`, `IEF`, `IAUM`, `BIL`).
-  - All allocation decisions are **reported clearly** in the email and console output.
