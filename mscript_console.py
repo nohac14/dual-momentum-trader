@@ -27,7 +27,7 @@ from pandas.tseries.offsets import MonthEnd
 US_EQ_SPY = "SPMO"
 US_EQ_QQQ = "QQQM"
 US_EQ_OPTIONS = [US_EQ_SPY, US_EQ_QQQ]  # Strategy picks the stronger of these two
-INTL_EQ = "VXUS"
+INTL_EQ_OPTIONS = ["IQLT", "DIVI"]
 GOLD    = "IAUM"   # Falls back to IAU for history
 CASH    = "BIL"    # Risk-ON residual
 
@@ -258,7 +258,7 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
 
     # Tickers needed for momentum + classifier (dedup handled in safe_adj_close)
     tickers = [
-        *US_EQ_OPTIONS, INTL_EQ, GOLD, CASH,
+        *US_EQ_OPTIONS, *INTL_EQ_OPTIONS, GOLD, CASH,
         BOND_DEF_NEUTRAL, BOND_DEF_INFLATION, BOND_DEF_DEFLATION,
         *CLASSIFIER_TICKERS
     ]
@@ -273,22 +273,29 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
 
     per_model = []
     for lbs in REL_LOOKBACKS_ENSEMBLE:
-        # Calculate scores for all equity options
+        # Calculate scores for all U.S. equity options
         us_scores = {
-            ticker: relative_momentum_score(adj_close[ticker], signal_ts, lbs)
-            for ticker in US_EQ_OPTIONS
+            t: relative_momentum_score(adj_close[t], signal_ts, lbs)
+            for t in US_EQ_OPTIONS
         }
-        intl_score, intl_comps = relative_momentum_score(adj_close[INTL_EQ], signal_ts, lbs)
-
-        # Find the best performing US equity ticker
         us_winner_ticker = max(us_scores, key=lambda t: us_scores[t][0])
         us_winner_score, us_winner_comps = us_scores[us_winner_ticker]
 
-        # Compare the US winner with the International winner to get the final equity winner
-        if us_winner_score >= intl_score:
+        # NEW: calculate scores for international options (IQLT vs DIVI) and pick a winner
+        intl_scores = {
+            t: relative_momentum_score(adj_close[t], signal_ts, lbs)
+            for t in INTL_EQ_OPTIONS
+        }
+        intl_winner_ticker = max(intl_scores, key=lambda t: intl_scores[t][0])
+        intl_winner_score, intl_winner_comps = intl_scores[intl_winner_ticker]
+
+        # Compare U.S. winner vs International winner
+        if us_winner_score >= intl_winner_score:
             winner, winner_score, winner_comps = us_winner_ticker, us_winner_score, us_winner_comps
         else:
-            winner, winner_score, winner_comps = INTL_EQ, intl_score, intl_comps
+            winner, winner_score, winner_comps = intl_winner_ticker, intl_winner_score, intl_winner_comps
+
+
 
         for gate in ABS_GATES:
             abs_check = absolute_gate(adj_close[winner], signal_ts, gate)
@@ -296,7 +303,8 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
 
             # Initialize allocation dict with all possible equity assets
             alloc = {t: 0.0 for t in US_EQ_OPTIONS}
-            alloc[INTL_EQ] = 0.0
+            for t in INTL_EQ_OPTIONS:
+                alloc[t] = 0.0
 
             if abs_check["passed"]:
                 regime = f"RISK-ON → {winner}"
@@ -312,15 +320,17 @@ def decide_allocation(asof: dt.date | None = None) -> Dict[str, Any]:
                 "winner": winner,
                 "winner_score": winner_score,
                 "winner_comps": winner_comps,
+                "us_winner": us_winner_ticker,
+                "intl_winner": intl_winner_ticker,   # <— NEW
                 "abs_check": abs_check,
                 "recent_vol": recent_vol,
                 "eq_weight": eq_w,
                 "regime": regime,
                 "alloc": alloc
             })
-
+            
     # Average allocations across ensemble; ensure we include all relevant keys
-    keys = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
+    keys = [*US_EQ_OPTIONS, *INTL_EQ_OPTIONS, selected_bond, GOLD, CASH]
     final_alloc = {k: 0.0 for k in keys}
     for r in per_model:
         for k, v in r["alloc"].items():
@@ -375,11 +385,12 @@ def print_config(c: C, cfg: Dict[str, Any]):
 
 def print_allocation(c: C, alloc: Dict[str, float], selected_bond: str, title="Final Averaged Allocation"):
     print_header(c, f"\n{title}")
-    order = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
+    order = [*US_EQ_OPTIONS, *INTL_EQ_OPTIONS, selected_bond, GOLD, CASH]
     labels = {
         US_EQ_SPY: "US (S&P 500)",
         US_EQ_QQQ: "US (Nasdaq 100)",
-        INTL_EQ: "Intl",
+        "IQLT": "Intl (Quality)",
+        "DIVI": "Intl (Dividends)",
         GOLD: "Gold",
         CASH: "Cash/T-Bills",
         selected_bond: f"Bonds ({selected_bond})"
@@ -387,7 +398,7 @@ def print_allocation(c: C, alloc: Dict[str, float], selected_bond: str, title="F
     for t in order:
         if t not in alloc: continue
         w = alloc.get(t, 0.0)
-        color = c.green if (t in US_EQ_OPTIONS or t == INTL_EQ) and w > 0 else c.cyan if t == CASH else c.yellow
+        color = c.green if (t in US_EQ_OPTIONS or t == INTL_EQ_OPTIONS) and w > 0 else c.cyan if t == CASH else c.yellow
         print(f"  {labels.get(t, t):16s} ({t}): {color}{pct(w)}{c.reset}")
 
 def print_macro_block(c: C, out: Dict[str, Any]):
@@ -457,13 +468,17 @@ def parse_args():
 def to_csv_rows(per_model: List[Dict[str, Any]], selected_bond: str) -> pd.DataFrame:
     recs = []
     # Define the full set of possible allocation keys
-    alloc_keys = [*US_EQ_OPTIONS, INTL_EQ, selected_bond, GOLD, CASH]
+    alloc_keys = [*US_EQ_OPTIONS, *INTL_EQ_OPTIONS, selected_bond, GOLD, CASH]
     for r in per_model:
         if r["gate"] == "abs12":
             abs_val = r["abs_check"]["detail"].get("abs12", np.nan)
         else:
             d = r["abs_check"]["detail"]
-            abs_val = (d.get("px", np.nan) / d.get("sma200", np.nan)) if d.get("sma200", np.nan) not in [0, np.nan] else np.nan
+            px = d.get("px")
+            sma200 = d.get("sma200")
+            abs_val = np.nan
+            if (px is not None) and (sma200 is not None) and (not pd.isna(px)) and (not pd.isna(sma200)) and (sma200 != 0):
+                abs_val = px / sma200
         row = {
             "lookbacks": str(r["lbs"]),
             "gate": r["gate"],
